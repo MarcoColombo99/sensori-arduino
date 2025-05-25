@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dati dei Sensori</title>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    canvas { max-width: 100%; margin-bottom: 40px; }
+    button { padding: 10px 20px; font-size: 16px; margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+
+  <button onclick="exportToExcel()">📤 Esporta in Excel</button>
+  <h1>Dati dei sensori</h1>
+
+  <canvas id="chartA0"></canvas>
+  <canvas id="chartA1"></canvas>
+  <canvas id="chartA2"></canvas>
+
+  <script>
+    const broker = "wss://bdc57a98e9ff4dfab60974f7008df967.s1.eu.hivemq.cloud:8884/mqtt";
+    const options = {
+      username: "Marco1907",
+      password: "Atalanta$99",
+      clientId: "WebClient_" + Math.random().toString(16).substr(2, 8),
+      clean: true,
+      connectTimeout: 4000,
+      reconnectPeriod: 1000
+    };
+    const client = mqtt.connect(broker, options);
+
+    const labels = [];
+    const dataA0 = [];
+    const dataA1 = [];
+    const dataA2 = [];
+
+    // Dati per esportazione: prima 2 righe header e unità
+    const excelData = [
+      ["Data", "Ora", "Pressione", "Portata", "Potenza"],
+      ["gg/mm/aaaa", "hh:mm:ss", "[bar]", "[l/min]", "[W]"]
+    ];
+
+    function createChart(canvasId, label, color, dataArray, unit) {
+      return new Chart(document.getElementById(canvasId), {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: label,
+              data: dataArray,
+              borderColor: color,
+              borderWidth: 1,
+              fill: false
+            },
+            {
+              label: "Media",
+              data: [],
+              borderColor: "black",
+              borderDash: [5, 5],
+              borderWidth: 1,
+              fill: false,
+              pointRadius: 0
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {
+              labels: {
+                filter: (item) => item.text !== "Media" // nasconde "Media" dalla legenda
+              }
+            },
+            title: {
+              display: true,
+              text: `${label} (${unit})`
+            }
+          },
+          scales: {
+            x: {
+              ticks: {
+                callback: function(value) {
+                  // Divido etichetta in ora e data su due righe
+                  const parts = this.getLabelForValue(value).split(" ");
+                  return parts.join("\n");
+                }
+              }
+            },
+            y: {
+              min: 0,
+              max: 1023,
+              title: {
+                display: true,
+                text: `${label} (${unit})`
+              }
+            }
+          }
+        }
+      });
+    }
+
+    const chartA0 = createChart("chartA0", "Pressione", "red", dataA0, "bar");
+    const chartA1 = createChart("chartA1", "Portata", "blue", dataA1, "l/min");
+    const chartA2 = createChart("chartA2", "Potenza", "green", dataA2, "W");
+
+    function updateAverage(chart, dataArray) {
+      const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+      chart.data.datasets[1].data = Array(dataArray.length).fill(avg);
+      chart.update();
+    }
+
+    client.on("connect", () => {
+      console.log("Connesso a MQTT");
+      client.subscribe("sensori/dati");
+    });
+
+    client.on("message", (topic, message) => {
+      const dati = JSON.parse(message.toString());
+      const now = new Date();
+      const data = now.toLocaleDateString("it-IT");
+      const ora = now.toLocaleTimeString("it-IT");
+
+      labels.push(`${ora} ${data}`);
+      if (labels.length > 50) {
+        labels.shift(); dataA0.shift(); dataA1.shift(); dataA2.shift();
+      }
+
+      dataA0.push(dati.A0);
+      dataA1.push(dati.A1);
+      dataA2.push(dati.A2);
+
+      chartA0.update(); chartA1.update(); chartA2.update();
+      updateAverage(chartA0, dataA0);
+      updateAverage(chartA1, dataA1);
+      updateAverage(chartA2, dataA2);
+
+      excelData.push([data, ora, dati.A0, dati.A1, dati.A2]);
+    });
+
+    function exportToExcel() {
+      // Uso punto e virgola come separatore per Excel in Italia
+      const csv = excelData.map(row => row.join(";")).join("\n");
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "dati_sensori.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+</html>
