@@ -1,115 +1,196 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8">
-  <title>Dati Sensori 1111</title>
+  <meta charset="UTF-8" />
+  <title>Dati dei Sensori</title>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt/dist/mqtt.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    canvas { max-width: 100%; margin-bottom: 40px; }
+    button, input { padding: 10px; font-size: 16px; margin: 5px; }
+    .controls { margin-bottom: 20px; }
+  </style>
 </head>
 <body>
-  <h1>Grafici dei sensori</h1>
 
-  <h2>Seleziona periodo</h2>
-  <label>Inizio:</label>
-  <input type="datetime-local" id="startDateTime">
-  <label>Fine:</label>
-  <input type="datetime-local" id="endDateTime">
-  <button onclick="caricaDatiStorici()">📈 Carica dati storici</button>
+  <h1>Dati dei sensori</h1>
 
-  <h3>Media A0: <span id="avgA0">--</span></h3>
+  <div class="controls">
+    <button onclick="exportToExcel()">📤 Esporta TUTTI i dati</button><br><br>
+
+    <label for="startTime">Inizio:</label>
+    <input type="datetime-local" id="startTime">
+    <label for="endTime">Fine:</label>
+    <input type="datetime-local" id="endTime">
+    <button onclick="exportIntervalToExcel()">📤 Esporta intervallo</button>
+  </div>
+
   <canvas id="chartA0"></canvas>
-
-  <h3>Media A1: <span id="avgA1">--</span></h3>
   <canvas id="chartA1"></canvas>
-
-  <h3>Media A2: <span id="avgA2">--</span></h3>
   <canvas id="chartA2"></canvas>
 
   <script>
+    const broker = "wss://bdc57a98e9ff4dfab60974f7008df967.s1.eu.hivemq.cloud:8884/mqtt";
+    const options = {
+      username: "Marco1907",
+      password: "Atalanta$99",
+      clientId: "WebClient_" + Math.random().toString(16).substr(2, 8),
+      clean: true,
+      connectTimeout: 4000,
+      reconnectPeriod: 1000
+    };
+    const client = mqtt.connect(broker, options);
+
     const labels = [];
-    const dataA0 = [], dataA1 = [], dataA2 = [];
+    const dataA0 = [];
+    const dataA1 = [];
+    const dataA2 = [];
 
-    const config = (label, data, color) => ({
-      type: "line",
-      data: {
-        labels: labels,
-        datasets: [{
-          label: label,
-          data: data,
-          borderColor: color,
-          fill: false
-        }]
-      },
-      options: {
-        responsive: true,
-        scales: {
-          x: { display: true },
-          y: { display: true }
+    const excelData = [
+      ["Data", "Ora", "Pressione", "Portata", "Potenza"],
+      ["gg/mm/aaaa", "hh:mm:ss", "[bar]", "[l/min]", "[W]"]
+    ];
+
+    function createChart(canvasId, label, color, dataArray, unit) {
+      return new Chart(document.getElementById(canvasId), {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: label,
+              data: dataArray,
+              borderColor: color,
+              borderWidth: 1,
+              fill: false
+            },
+            {
+              label: "Media",
+              data: [],
+              borderColor: "black",
+              borderDash: [5, 5],
+              borderWidth: 1,
+              fill: false,
+              pointRadius: 0
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {
+              labels: {
+                filter: (item) => item.text !== "Media"
+              }
+            },
+            title: {
+              display: true,
+              text: `${label} (${unit})`
+            }
+          },
+          scales: {
+            x: {
+              ticks: {
+                callback: function(value) {
+                  const parts = this.getLabelForValue(value).split(" ");
+                  return parts.join("\n");
+                }
+              }
+            },
+            y: {
+              min: 0,
+              max: 1023,
+              title: {
+                display: true,
+                text: `${label} (${unit})`
+              }
+            }
+          }
         }
-      }
-    });
-
-    const chartA0 = new Chart(document.getElementById("chartA0"), config("A0", dataA0, "red"));
-    const chartA1 = new Chart(document.getElementById("chartA1"), config("A1", dataA1, "green"));
-    const chartA2 = new Chart(document.getElementById("chartA2"), config("A2", dataA2, "blue"));
-
-    function updateAverage(chart, data) {
-      const avg = data.length ? (data.reduce((a, b) => a + b, 0) / data.length).toFixed(2) : "--";
-      const id = "avg" + chart.config.data.datasets[0].label;
-      document.getElementById(id).textContent = avg;
+      });
     }
 
-    function caricaDatiStorici() {
-      const startDateTime = document.getElementById("startDateTime").value;
-      const endDateTime = document.getElementById("endDateTime").value;
+    const chartA0 = createChart("chartA0", "Pressione", "red", dataA0, "bar");
+    const chartA1 = createChart("chartA1", "Portata", "blue", dataA1, "l/min");
+    const chartA2 = createChart("chartA2", "Potenza", "green", dataA2, "W");
 
-      if (!startDateTime || !endDateTime) {
-        alert("Inserisci sia data e ora di inizio che di fine");
+    function updateAverage(chart, dataArray) {
+      const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+      chart.data.datasets[1].data = Array(dataArray.length).fill(avg);
+      chart.update();
+    }
+
+    client.on("connect", () => {
+      console.log("Connesso a MQTT");
+      client.subscribe("sensori/dati");
+    });
+
+    client.on("message", (topic, message) => {
+      const dati = JSON.parse(message.toString());
+      const now = new Date();
+      const data = now.toLocaleDateString("it-IT");
+      const ora = now.toLocaleTimeString("it-IT");
+      const timestamp = now.toISOString();
+
+      labels.push(`${ora} ${data}`);
+      if (labels.length > 50) {
+        labels.shift(); dataA0.shift(); dataA1.shift(); dataA2.shift();
+      }
+
+      dataA0.push(dati.A0);
+      dataA1.push(dati.A1);
+      dataA2.push(dati.A2);
+
+      chartA0.update(); chartA1.update(); chartA2.update();
+      updateAverage(chartA0, dataA0);
+      updateAverage(chartA1, dataA1);
+      updateAverage(chartA2, dataA2);
+
+      // Salva anche timestamp ISO per la selezione temporale
+      excelData.push([data, ora, dati.A0, dati.A1, dati.A2, timestamp]);
+    });
+
+    function exportToExcel() {
+      const csv = excelData.map(row => row.slice(0, 5).join(";")).join("\n");
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "dati_sensori_completi.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportIntervalToExcel() {
+      const start = document.getElementById("startTime").value;
+      const end = document.getElementById("endTime").value;
+      if (!start || !end) {
+        alert("Seleziona sia data/ora di inizio che di fine.");
         return;
       }
 
-      const url = `http://arduino.local/read_from_sd?start=${encodeURIComponent(startDateTime)}&end=${encodeURIComponent(endDateTime)}`;
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      const filtered = excelData.filter((row, i) => {
+        if (i < 2 || !row[5]) return true;
+        const rowDate = new Date(row[5]);
+        return rowDate >= startDate && rowDate <= endDate;
+      });
 
-      fetch(url)
-        .then(response => {
-          if (!response.ok) throw new Error("Errore nella risposta dal server");
-          return response.text();
-        })
-        .then(csv => {
-          const righe = csv.trim().split("\n").slice(2); // ignora intestazioni
-          const newLabels = [], newA0 = [], newA1 = [], newA2 = [];
+      if (filtered.length <= 2) {
+        alert("Nessun dato trovato nell'intervallo selezionato.");
+        return;
+      }
 
-          for (const riga of righe) {
-            const campi = riga.split(";");
-            const dataOra = `${campi[1]} ${campi[0]}`;
-            newLabels.push(dataOra);
-            newA0.push(parseFloat(campi[2]));
-            newA1.push(parseFloat(campi[3]));
-            newA2.push(parseFloat(campi[4]));
-          }
-
-          // aggiorna i dati dei grafici
-          labels.length = 0;
-          dataA0.length = 0;
-          dataA1.length = 0;
-          dataA2.length = 0;
-
-          labels.push(...newLabels);
-          dataA0.push(...newA0);
-          dataA1.push(...newA1);
-          dataA2.push(...newA2);
-
-          chartA0.update();
-          chartA1.update();
-          chartA2.update();
-
-          updateAverage(chartA0, dataA0);
-          updateAverage(chartA1, dataA1);
-          updateAverage(chartA2, dataA2);
-        })
-        .catch(error => {
-          console.error("Errore caricamento dati storici:", error);
-          alert("Errore caricamento dati storici: " + error.message);
-        });
+      const csv = filtered.map(row => row.slice(0, 5).join(";")).join("\n");
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "dati_sensori_intervallo.csv";
+      a.click();
+      URL.revokeObjectURL(url);
     }
   </script>
 </body>
