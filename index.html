@@ -1,209 +1,115 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8" />
-  <title>Dati dei Sensori 1</title>
-  <script src="https://cdn.jsdelivr.net/npm/mqtt/dist/mqtt.min.js"></script>
+  <meta charset="UTF-8">
+  <title>Dati Sensori</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    body { font-family: sans-serif; padding: 20px; }
-    canvas { max-width: 100%; margin-bottom: 40px; }
-    button { padding: 10px 20px; font-size: 16px; margin-bottom: 20px; }
-    #controls { margin-bottom: 20px; }
-    label { margin-right: 5px; }
-  </style>
 </head>
 <body>
+  <h1>Grafici dei sensori</h1>
 
-  <button onclick="exportToExcel()">📤 Esporta in Excel Completo</button>
+  <h2>Seleziona periodo</h2>
+  <label>Inizio:</label>
+  <input type="datetime-local" id="startDateTime">
+  <label>Fine:</label>
+  <input type="datetime-local" id="endDateTime">
+  <button onclick="caricaDatiStorici()">📈 Carica dati storici</button>
 
-  <h1>Dati dei sensori</h1>
-
-  <div id="controls">
-    <label for="startDate">Data inizio:</label>
-    <input type="date" id="startDate" />
-    <label for="endDate" style="margin-left: 20px;">Data fine:</label>
-    <input type="date" id="endDate" />
-    <button id="btnLoadData" style="margin-left: 20px;">Carica dati storici</button>
-  </div>
-
+  <h3>Media A0: <span id="avgA0">--</span></h3>
   <canvas id="chartA0"></canvas>
+
+  <h3>Media A1: <span id="avgA1">--</span></h3>
   <canvas id="chartA1"></canvas>
+
+  <h3>Media A2: <span id="avgA2">--</span></h3>
   <canvas id="chartA2"></canvas>
 
   <script>
-    const broker = "wss://bdc57a98e9ff4dfab60974f7008df967.s1.eu.hivemq.cloud:8884/mqtt";
-    const options = {
-      username: "Marco1907",
-      password: "Atalanta$99",
-      clientId: "WebClient_" + Math.random().toString(16).substr(2, 8),
-      clean: true,
-      connectTimeout: 4000,
-      reconnectPeriod: 1000
-    };
-    const client = mqtt.connect(broker, options);
-
     const labels = [];
-    const dataA0 = [];
-    const dataA1 = [];
-    const dataA2 = [];
+    const dataA0 = [], dataA1 = [], dataA2 = [];
 
-    // Dati per esportazione: header e unità
-    const excelData = [
-      ["Data", "Ora", "Pressione", "Portata", "Potenza"],
-      ["gg/mm/aaaa", "hh:mm:ss", "[bar]", "[l/min]", "[W]"]
-    ];
-
-    function createChart(canvasId, label, color, dataArray, unit) {
-      return new Chart(document.getElementById(canvasId), {
-        type: "line",
-        data: {
-          labels: labels,
-          datasets: [
-            {
-              label: label,
-              data: dataArray,
-              borderColor: color,
-              borderWidth: 1,
-              fill: false
-            },
-            {
-              label: "Media",
-              data: [],
-              borderColor: "black",
-              borderDash: [5, 5],
-              borderWidth: 1,
-              fill: false,
-              pointRadius: 0
-            }
-          ]
-        },
-        options: {
-          responsive: true,
-          plugins: {
-            legend: {
-              labels: {
-                filter: (item) => item.text !== "Media" // nasconde "Media" dalla legenda
-              }
-            },
-            title: {
-              display: true,
-              text: `${label} (${unit})`
-            }
-          },
-          scales: {
-            x: {
-              ticks: {
-                callback: function(value) {
-                  // Mostra ora e data su due righe nell'asse X
-                  const parts = this.getLabelForValue(value).split(" ");
-                  return parts.join("\n");
-                }
-              }
-            },
-            y: {
-              min: 0,
-              max: 1023,
-              title: {
-                display: true,
-                text: `${label} (${unit})`
-              }
-            }
-          }
+    const config = (label, data, color) => ({
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [{
+          label: label,
+          data: data,
+          borderColor: color,
+          fill: false
+        }]
+      },
+      options: {
+        responsive: true,
+        scales: {
+          x: { display: true },
+          y: { display: true }
         }
-      });
-    }
-
-    const chartA0 = createChart("chartA0", "Pressione", "red", dataA0, "bar");
-    const chartA1 = createChart("chartA1", "Portata", "blue", dataA1, "l/min");
-    const chartA2 = createChart("chartA2", "Potenza", "green", dataA2, "W");
-
-    function updateAverage(chart, dataArray) {
-      if(dataArray.length === 0) return;
-      const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-      chart.data.datasets[1].data = Array(dataArray.length).fill(avg);
-      chart.update();
-    }
-
-    client.on("connect", () => {
-      console.log("Connesso a MQTT");
-      client.subscribe("sensori/dati");
+      }
     });
 
-    client.on("message", (topic, message) => {
-      const dati = JSON.parse(message.toString());
-      const now = new Date();
-      const data = now.toLocaleDateString("it-IT");
-      const ora = now.toLocaleTimeString("it-IT");
+    const chartA0 = new Chart(document.getElementById("chartA0"), config("A0", dataA0, "red"));
+    const chartA1 = new Chart(document.getElementById("chartA1"), config("A1", dataA1, "green"));
+    const chartA2 = new Chart(document.getElementById("chartA2"), config("A2", dataA2, "blue"));
 
-      labels.push(`${ora} ${data}`);
-      if (labels.length > 50) {
-        labels.shift(); dataA0.shift(); dataA1.shift(); dataA2.shift();
-      }
+    function updateAverage(chart, data) {
+      const avg = data.length ? (data.reduce((a, b) => a + b, 0) / data.length).toFixed(2) : "--";
+      const id = "avg" + chart.config.data.datasets[0].label;
+      document.getElementById(id).textContent = avg;
+    }
 
-      dataA0.push(dati.A0);
-      dataA1.push(dati.A1);
-      dataA2.push(dati.A2);
+    function caricaDatiStorici() {
+      const startDateTime = document.getElementById("startDateTime").value;
+      const endDateTime = document.getElementById("endDateTime").value;
 
-      chartA0.update(); chartA1.update(); chartA2.update();
-      updateAverage(chartA0, dataA0);
-      updateAverage(chartA1, dataA1);
-      updateAverage(chartA2, dataA2);
-
-      excelData.push([data, ora, dati.A0, dati.A1, dati.A2]);
-    });
-
-    // Nuova funzione per caricare dati storici da Arduino filtrati per data
-    document.getElementById("btnLoadData").addEventListener("click", () => {
-      const startDate = document.getElementById("startDate").value;
-      const endDate = document.getElementById("endDate").value;
-      if (!startDate || !endDate) {
-        alert("Seleziona entrambe le date inizio e fine");
-        return;
-      }
-      if (startDate > endDate) {
-        alert("La data inizio deve essere precedente o uguale alla data fine");
+      if (!startDateTime || !endDateTime) {
+        alert("Inserisci sia data e ora di inizio che di fine");
         return;
       }
 
-      // Effettua richiesta GET a /data?start=YYYY-MM-DD&end=YYYY-MM-DD
-      fetch(`/data?start=${startDate}&end=${endDate}`)
-        .then(res => {
-          if (!res.ok) throw new Error("Errore nella risposta dal server");
-          return res.json();
+      const url = `http://arduino.local/read_from_sd?start=${encodeURIComponent(startDateTime)}&end=${encodeURIComponent(endDateTime)}`;
+
+      fetch(url)
+        .then(response => {
+          if (!response.ok) throw new Error("Errore nella risposta dal server");
+          return response.text();
         })
-        .then(data => {
-          // Pulisce array esistenti
+        .then(csv => {
+          const righe = csv.trim().split("\n").slice(2); // ignora intestazioni
+          const newLabels = [], newA0 = [], newA1 = [], newA2 = [];
+
+          for (const riga of righe) {
+            const campi = riga.split(";");
+            const dataOra = `${campi[1]} ${campi[0]}`;
+            newLabels.push(dataOra);
+            newA0.push(parseFloat(campi[2]));
+            newA1.push(parseFloat(campi[3]));
+            newA2.push(parseFloat(campi[4]));
+          }
+
+          // aggiorna i dati dei grafici
           labels.length = 0;
           dataA0.length = 0;
           dataA1.length = 0;
           dataA2.length = 0;
-          excelData.length = 2; // mantieni header e unità
 
-          data.forEach(row => {
-            // Assumendo row ha campi: data (yyyy-mm-dd), ora (hh:mm:ss), val1, val2, val3
-            labels.push(`${row.ora} ${row.data}`);
-            dataA0.push(row.val1);
-            dataA1.push(row.val2);
-            dataA2.push(row.val3);
-            excelData.push([row.data, row.ora, row.val1, row.val2, row.val3]);
-          });
+          labels.push(...newLabels);
+          dataA0.push(...newA0);
+          dataA1.push(...newA1);
+          dataA2.push(...newA2);
 
           chartA0.update();
           chartA1.update();
           chartA2.update();
+
           updateAverage(chartA0, dataA0);
           updateAverage(chartA1, dataA1);
           updateAverage(chartA2, dataA2);
         })
-        .catch(err => {
-          alert("Errore caricamento dati storici: " + err.message);
+        .catch(error => {
+          console.error("Errore caricamento dati storici:", error);
+          alert("Errore caricamento dati storici: " + error.message);
         });
-    });
-
-    function exportToExcel() {
-      // Scarica il file dati.csv completo da Arduino
-      window.location.href = '/dati.csv';
     }
   </script>
 </body>
