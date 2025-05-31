@@ -9,12 +9,23 @@
     body { font-family: sans-serif; padding: 20px; }
     canvas { max-width: 100%; margin-bottom: 40px; }
     button { padding: 10px 20px; font-size: 16px; margin-bottom: 20px; }
+    #controls { margin-bottom: 20px; }
+    label { margin-right: 5px; }
   </style>
 </head>
 <body>
 
-  <button onclick="exportToExcel()">📤 Esporta in Excel</button>
+  <button onclick="exportToExcel()">📤 Esporta in Excel Completo</button>
+
   <h1>Dati dei sensori</h1>
+
+  <div id="controls">
+    <label for="startDate">Data inizio:</label>
+    <input type="date" id="startDate" />
+    <label for="endDate" style="margin-left: 20px;">Data fine:</label>
+    <input type="date" id="endDate" />
+    <button id="btnLoadData" style="margin-left: 20px;">Carica dati storici</button>
+  </div>
 
   <canvas id="chartA0"></canvas>
   <canvas id="chartA1"></canvas>
@@ -37,7 +48,7 @@
     const dataA1 = [];
     const dataA2 = [];
 
-    // Dati per esportazione: prima 2 righe header e unità
+    // Dati per esportazione: header e unità
     const excelData = [
       ["Data", "Ora", "Pressione", "Portata", "Potenza"],
       ["gg/mm/aaaa", "hh:mm:ss", "[bar]", "[l/min]", "[W]"]
@@ -84,7 +95,7 @@
             x: {
               ticks: {
                 callback: function(value) {
-                  // Divido etichetta in ora e data su due righe
+                  // Mostra ora e data su due righe nell'asse X
                   const parts = this.getLabelForValue(value).split(" ");
                   return parts.join("\n");
                 }
@@ -108,6 +119,7 @@
     const chartA2 = createChart("chartA2", "Potenza", "green", dataA2, "W");
 
     function updateAverage(chart, dataArray) {
+      if(dataArray.length === 0) return;
       const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
       chart.data.datasets[1].data = Array(dataArray.length).fill(avg);
       chart.update();
@@ -141,16 +153,57 @@
       excelData.push([data, ora, dati.A0, dati.A1, dati.A2]);
     });
 
+    // Nuova funzione per caricare dati storici da Arduino filtrati per data
+    document.getElementById("btnLoadData").addEventListener("click", () => {
+      const startDate = document.getElementById("startDate").value;
+      const endDate = document.getElementById("endDate").value;
+      if (!startDate || !endDate) {
+        alert("Seleziona entrambe le date inizio e fine");
+        return;
+      }
+      if (startDate > endDate) {
+        alert("La data inizio deve essere precedente o uguale alla data fine");
+        return;
+      }
+
+      // Effettua richiesta GET a /data?start=YYYY-MM-DD&end=YYYY-MM-DD
+      fetch(`/data?start=${startDate}&end=${endDate}`)
+        .then(res => {
+          if (!res.ok) throw new Error("Errore nella risposta dal server");
+          return res.json();
+        })
+        .then(data => {
+          // Pulisce array esistenti
+          labels.length = 0;
+          dataA0.length = 0;
+          dataA1.length = 0;
+          dataA2.length = 0;
+          excelData.length = 2; // mantieni header e unità
+
+          data.forEach(row => {
+            // Assumendo row ha campi: data (yyyy-mm-dd), ora (hh:mm:ss), val1, val2, val3
+            labels.push(`${row.ora} ${row.data}`);
+            dataA0.push(row.val1);
+            dataA1.push(row.val2);
+            dataA2.push(row.val3);
+            excelData.push([row.data, row.ora, row.val1, row.val2, row.val3]);
+          });
+
+          chartA0.update();
+          chartA1.update();
+          chartA2.update();
+          updateAverage(chartA0, dataA0);
+          updateAverage(chartA1, dataA1);
+          updateAverage(chartA2, dataA2);
+        })
+        .catch(err => {
+          alert("Errore caricamento dati storici: " + err.message);
+        });
+    });
+
     function exportToExcel() {
-      // Uso punto e virgola come separatore per Excel in Italia
-      const csv = excelData.map(row => row.join(";")).join("\n");
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "dati_sensori.csv";
-      a.click();
-      URL.revokeObjectURL(url);
+      // Scarica il file dati.csv completo da Arduino
+      window.location.href = '/dati.csv';
     }
   </script>
 </body>
